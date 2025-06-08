@@ -1,16 +1,12 @@
 import os
-import re
 import pandas as pd
-import torch
 from docx import Document
 from sklearn.preprocessing import LabelEncoder
 from datasets import Dataset
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
-    TrainingArguments, Trainer
+    TrainingArguments
 )
-from spacy.lang.ro import Romanian
-import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
@@ -21,20 +17,32 @@ import torch.nn as nn
 from collections import Counter
 import torch
 import numpy as np
+from transformers import TrainerCallback
+
+
+class MetricLoggerCallback(TrainerCallback):
+    def __init__(self):
+        self.logs = []
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics:
+            self.logs.append({
+                "epoch": state.epoch,
+                "f1": metrics.get("eval_f1"),
+                "accuracy": metrics.get("eval_accuracy"),
+                "loss": metrics.get("eval_loss")
+            })
 
 
 # MODEL_NAME = "dumitrescustefan/bert-base-romanian-cased-v1"
-# MODEL_NAME = "readerbench/RoBERT-base"
-MODEL_NAME = "xlm-roberta-base"
-CORPUS_PATH = "/Users/vivianapantazica/Desktop/romanian-poetry-corpus"
-LABELS_CSV = "../generated/manual_classified.csv"
+MODEL_NAME = "readerbench/RoBERT-base"
+# MODEL_NAME = "xlm-roberta-base"
+CORPUS_PATH = "../romanian-poetry-corpus"
+LABELS_CSV = "../manual_classified.csv"
 NUM_EPOCHS = 10
 BATCH_SIZE = 8
 
-nlp = Romanian()
-stopwords_ro = nlp.Defaults.stop_words
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-
 
 class WeightedTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -48,12 +56,11 @@ class WeightedTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-def clean_text(text):
-    text = re.sub(r'[^a-zA-ZăîâșțĂÎÂȘȚ ]+', ' ', text)
-    return text
-
 def preprocess(text):
-    return clean_text(text.lower())
+    text = text.replace("ţ", "ț").replace("ş", "ș").replace("Ţ", "Ț").replace("Ş", "Ș")
+    text = text.replace("â", "î").replace("Â", "Î")
+    return text.lower()
+
 
 def read_docx(file_path):
     doc = Document(file_path)
@@ -114,6 +121,7 @@ for text, title, author in zip(texts, titles, authors):
 df = pd.DataFrame(data)
 label_encoder = LabelEncoder()
 df["label"] = label_encoder.fit_transform(df["label"])
+print(df["label"].value_counts())
 
 train_df, test_df = train_test_split(
     df, test_size=0.2, stratify=df["label"], random_state=42
@@ -133,12 +141,17 @@ plt.savefig("label_distribution.png")
 plt.close()
 
 
-label_counts = Counter(train_dataset["label"])
-num_labels = len(label_counts)
+label_counts = Counter(train_df["label"])
 total_samples = sum(label_counts.values())
-class_weights = [total_samples / label_counts[i] for i in range(num_labels)]
+num_labels = len(label_encoder.classes_)
+
+class_weights = [0] * num_labels
+for i in range(num_labels):
+    class_weights[i] = total_samples / label_counts.get(i, 1)
+
 weights_tensor = torch.tensor(class_weights, dtype=torch.float)
 weights_tensor = weights_tensor / weights_tensor.sum()
+
 
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -150,6 +163,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
 
 
 training_args = TrainingArguments(
+    seed=42,
     output_dir="./results",
     per_device_train_batch_size=8,
     per_device_eval_batch_size=8,
@@ -163,15 +177,7 @@ training_args = TrainingArguments(
     greater_is_better=True
 )
 
-# trainer = Trainer(
-#     model=model,
-#     args=training_args,
-#     train_dataset=train_dataset,
-#     eval_dataset=test_dataset,
-#     tokenizer=tokenizer,
-#     compute_metrics=compute_metrics,
-#     callbacks=[EarlyStoppingCallback(early_stopping_patience=2)]
-# )
+metric_logger = MetricLoggerCallback()
 
 trainer = WeightedTrainer(
     model=model,
@@ -179,10 +185,16 @@ trainer = WeightedTrainer(
     train_dataset=train_dataset,
     eval_dataset=test_dataset,
     tokenizer=tokenizer,
-    compute_metrics=compute_metrics
+    compute_metrics=compute_metrics,
+    callbacks=[
+        EarlyStoppingCallback(early_stopping_patience=2),
+        metric_logger
+    ]
 )
 
 trainer.train()
+metrics = trainer.evaluate()
+print(metrics)
 
 
 # model.save_pretrained("./finetuned-roberta-poetry")
@@ -232,5 +244,23 @@ plt.ylabel('Etichete reale')
 plt.xlabel('Etichete prezise')
 plt.title('Matrice de confuzie')
 plt.tight_layout()
-plt.savefig("confusion_matrix_bert.png")
+plt.savefig("confusion_matrix_bert2.png")
+plt.close()
+
+
+logs = metric_logger.logs
+pd.DataFrame(metric_logger.logs).to_csv("training_logs.csv", index=False)
+epochs = [log["epoch"] for log in logs]
+f1_scores = [log["f1"] for log in logs]
+losses = [log["loss"] for log in logs]
+
+plt.figure()
+plt.plot(epochs, f1_scores, label="F1 Score")
+plt.plot(epochs, losses, label="Eval Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Metric Value")
+plt.title("Evaluation Metrics per Epoch")
+plt.legend()
+plt.tight_layout()
+plt.savefig("training_metrics.png")
 plt.close()
