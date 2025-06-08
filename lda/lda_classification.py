@@ -15,10 +15,18 @@ nlp = spacy.load("ro_core_news_sm")
 
 with open("../stopwords_ro.txt", encoding="utf-8") as f:
     stopwords_ro = set(f.read().splitlines())
+    custom_stopwords = {
+        "vrea", "vedea", "veni", "merge", "simți", "zice", "face", "avea",
+        "trece", "rămâne", "spune", "ajunge", "pleca", "părea", "sta", "lua",
+        "scrie", "vorbi", "aduce", "duce", "arăta", "începe", "întoarce"
+    }
+    stopwords_ro = stopwords_ro.union(custom_stopwords)
 
 
 def clean_text(text):
     text = re.sub(r'[^a-zA-ZăîâșțĂÎÂȘȚ ]+', ' ', text)
+    text = text.replace("ţ", "ț").replace("ş", "ș").replace("Ţ", "Ț").replace("Ş", "Ș")
+    text = text.replace("â", "î").replace("Â", "Î")
     return text
 
 
@@ -66,7 +74,7 @@ def load_poems(corpus_path):
     return texts, titles, authors
 
 
-corpus_path = "/Users/vivianapantazica/Desktop/romanian-poetry-corpus"
+corpus_path = "../romanian-poetry-corpus"
 texts, titles, authors = load_poems(corpus_path)
 
 print("[INFO] Se preprocesează textele...")
@@ -78,7 +86,7 @@ print(f"[INFO] Preprocesare finalizată pentru {len(processed_texts)} poezii.")
 
 print("[INFO] Se construiește dicționarul și corpusul...")
 dictionary = corpora.Dictionary(processed_texts)
-dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=10000)
+dictionary.filter_extremes(no_below=5, no_above=0.4, keep_n=10000)
 dictionary.filter_tokens(bad_ids=[dictionary.token2id[token] for token in dictionary.token2id if len(token) <= 2])
 corpus = [dictionary.doc2bow(text) for text in processed_texts]
 print(f"[INFO] Dicționar creat cu {len(dictionary)} termeni.")
@@ -134,11 +142,14 @@ for i in range(len(texts)):
 
 
 df = pd.DataFrame(results)
-output_path = "../generated/lda_classified_1.csv"
+output_path = "../generated/lda_classified.csv"
 df.to_csv(output_path, index=False, encoding='utf-8-sig')
 print(f"[INFO] Rezultatele au fost salvate în: {output_path}")
 
 
 if __name__ == '__main__':
     multiprocessing.set_start_method('spawn')
+    with open("../generated/lda_topics.txt", "w", encoding="utf-8") as f:
+        for idx, topic in lda_model.print_topics(-1):
+            f.write(f"Tema #{idx}: {topic}\n")
     compute_coherence()

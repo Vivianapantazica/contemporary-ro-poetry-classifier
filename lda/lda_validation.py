@@ -2,7 +2,7 @@ import pandas as pd
 
 
 lda_df = pd.read_csv("../generated/lda_theme_annotated.csv")
-manual_df = pd.read_csv("../generated/manual_classified.csv")
+manual_df = pd.read_csv("../manual_classified.csv")
 
 # Normalize titles and authors for matching
 lda_df["Titlu"] = lda_df["Titlu"].str.strip().str.lower()
@@ -25,12 +25,8 @@ print(unmatched_lda[["Titlu", "Autor"]])
 
 # Compute score
 def calculate_score(predicted_theme, theme1, theme2, theme3):
-    if predicted_theme == theme1:
+    if predicted_theme == theme1 or predicted_theme == theme2 or predicted_theme == theme3:
         return 100
-    elif predicted_theme == theme2:
-        return 50
-    elif predicted_theme == theme3:
-        return 25
     else:
         return 0
 
